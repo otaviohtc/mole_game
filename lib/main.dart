@@ -5,7 +5,7 @@ import 'game_state.dart';
 
 void main() {
   runApp(
-    // Envolve o app no Provider para gerenciar o estado
+    // Envolve o app com o provider GameState para gerenciar o estado compartilhado entre as telas
     ChangeNotifierProvider(
       create: (context) => GameState(),
       child: const MoleGameApp(),

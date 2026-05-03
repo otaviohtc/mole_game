@@ -25,7 +25,6 @@ class Upgrade {
 class GameState extends ChangeNotifier {
   int coins = 0; 
   
-  // Efeitos estáticos
   int extraMoleTimeMs = 0;
   int coinMultiplier = 1;
 
@@ -33,13 +32,12 @@ class GameState extends ChangeNotifier {
 
   GameState() {
     upgrades = [
-      // --- UPGRADES CLÁSSICOS ---
       Upgrade(
         id: 'golden_mallet', 
         name: 'Martelo Dourado', 
         description: 'Aumenta as moedas recebidas por acerto.', 
         icon: Icons.gavel, 
-        cost: 20,
+        cost: 10,
         maxLevel: 10,
       ),
       Upgrade(
@@ -47,17 +45,8 @@ class GameState extends ChangeNotifier {
         name: 'Reflexos Lentos', 
         description: 'Toupeira fica mais tempo na tela.', 
         icon: Icons.timer, 
-        cost: 10,
+        cost: 15,
         maxLevel: 10,
-      ),
-      Upgrade(
-        id: 'multi_mole',
-        name: '+ Toupeiras',
-        description: 'Dobra a quantidade de toupeiras simultâneas.',
-        icon: Icons.people,
-        cost: 40,
-        maxLevel: 2,
-        customCosts: [40, 80], // Tabela de preços
       ),
       Upgrade(
         id: 'pacifist',
@@ -68,12 +57,13 @@ class GameState extends ChangeNotifier {
         maxLevel: 10,
       ),
       Upgrade(
-        id: 'survivor',
-        name: 'Sobrevivente',
-        description: 'Sobreviva 1 min para dobrar os ganhos do round.',
-        icon: Icons.shield,
-        cost: 100,
-        maxLevel: 1, // Compra única
+        id: 'multi_mole',
+        name: 'Infestação',
+        description: 'Dobra a quantidade de toupeiras simultâneas.',
+        icon: Icons.people,
+        cost: 40,
+        maxLevel: 2,
+        customCosts: [40, 80], // Tabela de preços
       ),
       Upgrade(
         id: 'golden_mole',
@@ -84,11 +74,18 @@ class GameState extends ChangeNotifier {
         maxLevel: 3,
         customCosts: [50, 100, 150],
       ),
+      Upgrade(
+        id: 'survivor',
+        name: 'Sobrevivente',
+        description: 'Sobreviva 1 min para dobrar os ganhos do round.',
+        icon: Icons.shield,
+        cost: 100,
+        maxLevel: 1, // Compra única
+      ),
     ];
   }
 
-  // --- Getters dos Efeitos Novos para usar na GameScreen ---
-  
+  // Getters da jogabilidade para efeitos de upgrade
   int get maxMoles {
     int level = _getLevel('multi_mole');
     if (level == 1) return 2;
@@ -106,8 +103,6 @@ class GameState extends ChangeNotifier {
     return upgrades.firstWhere((u) => u.id == id).level;
   }
 
-  // --- Ações ---
-
   void addCoins(int amount) {
     coins += amount;
     notifyListeners();
@@ -123,15 +118,15 @@ class GameState extends ChangeNotifier {
 
       // Efeitos estáticos de upgrades que afetam variáveis globais
       if (id == 'time') extraMoleTimeMs += 200;
-      if (id == 'golden_mallet') coinMultiplier += 1; // <--- Martelo funcionando aqui!
+      if (id == 'golden_mallet') coinMultiplier += 1;
 
       // Define o preço da próxima compra
       if (upgrade.level < upgrade.maxLevel) {
         if (upgrade.customCosts != null) {
           upgrade.cost = upgrade.customCosts![upgrade.level];
         } else {
-          // Escala de preço padrão (ex: +30% mais caro) se não houver customCosts
-          upgrade.cost = (upgrade.cost * 1.3).toInt(); 
+          // Escala de preço padrão (ex: +50% mais caro) se não houver customCosts
+          upgrade.cost = (upgrade.cost * 1.5).toInt(); 
         }
       }
       notifyListeners();

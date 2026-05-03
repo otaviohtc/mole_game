@@ -5,6 +5,22 @@ import 'package:provider/provider.dart';
 
 import 'game_state.dart';
 import 'shop.dart';
+import 'audio_utils.dart';
+
+class MoleData {
+  final String id;
+  final double x;
+  final double y;
+  final bool isGolden;
+  Timer? despawnTimer;
+
+  MoleData({
+    required this.id,
+    required this.x,
+    required this.y,
+    required this.isGolden,
+  });
+}
 
 class GameScreen extends StatefulWidget {
   const GameScreen({super.key});
@@ -14,30 +30,25 @@ class GameScreen extends StatefulWidget {
 }
 
 class _GameScreenState extends State<GameScreen> {
-  // --- Estado do Jogo (Local) ---
+  // Estado
   int survivalSeconds = 0;
+  int roundCoins = 0;
+  int moleCounter = 0;
   bool isGameOver = false;
-  
-  // --- Posição e Estado da Toupeira ---
-  bool isMoleVisible = false;
-  double moleX = 0.0;
-  double moleY = 0.0;
+  List<MoleData> moles = [];
 
-  // --- Cronômetros ---
   Timer? survivalTimer;
-  Timer? nextMoleTimer; // Substitui o moleSpawnerTimer fixo
-  Timer? moleDespawnTimer;
+  Timer? nextMoleTimer;
 
   final Random random = Random();
 
-  // --- Parâmetros de Dificuldade ---
-  // Valores iniciais
-  final double startSpawnRateMs = 2000.0; 
-  final double startUptimeMs = 1500.0;
+  // Parâmetros de dificuldade
+  final double startSpawnRateMs = 900.0; 
+  final double startUptimeMs = 1100.0;
   
   // Limites mínimos (para o jogo não ficar impossível)
-  final double minSpawnRateMs = 600.0;
-  final double minUptimeMs = 400.0;
+  final double minSpawnRateMs = 300.0;
+  final double minUptimeMs = 200.0;
 
   @override
   void initState() {
@@ -48,11 +59,12 @@ class _GameScreenState extends State<GameScreen> {
   void startGame() {
     setState(() {
       survivalSeconds = 0;
-      isMoleVisible = false;
+      roundCoins = 0;
       isGameOver = false;
+      moles = [];
     });
 
-    // Cronômetro de sobrevivência
+    // Timers da lógica do jogo
     survivalTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!isGameOver) {
         setState(() {
@@ -61,77 +73,126 @@ class _GameScreenState extends State<GameScreen> {
       }
     });
 
-    // Inicia o ciclo de spawn
     scheduleNextMole();
   }
 
-  // --- Lógica da Curva de Dificuldade ---
+  // Lógica da curva de dificuldade
   void scheduleNextMole() {
     if (isGameOver) return;
+    
+    nextMoleTimer?.cancel();
+    
+    final gameState = Provider.of<GameState>(context, listen: false);
+    if (moles.length >= gameState.maxMoles) return;
 
-    // A cada segundo que passa, diminuímos os milissegundos.
-    // Ex: A cada segundo, o spawn fica 15ms mais rápido.
     double calculatedSpawnRate = startSpawnRateMs - (survivalSeconds * 15);
     int currentSpawnDelay = max(minSpawnRateMs.toInt(), calculatedSpawnRate.toInt());
 
+    // Ajuste crucial: se o limite de toupeiras for maior que 1, 
+    // precisamos spawnar mais rápido para que elas coexistam na tela.
+    if (gameState.maxMoles > 1) {
+      // Divide o delay pelo número de slots para forçar o preenchimento da tela
+      currentSpawnDelay = (currentSpawnDelay / (gameState.maxMoles * 0.8)).toInt();
+      currentSpawnDelay = max(150, currentSpawnDelay); // Limite mínimo agressivo para infestação
+    }
+
     nextMoleTimer = Timer(Duration(milliseconds: currentSpawnDelay), () {
       spawnMole();
+      scheduleNextMole(); 
     });
   }
 
   void spawnMole() {
     if (isGameOver) return;
 
-    setState(() {
-      moleX = (random.nextDouble() * 1.7) - 0.85;
-      moleY = (random.nextDouble() * 1.7) - 0.85;
-      isMoleVisible = true;
-    });
+    final gameState = Provider.of<GameState>(context, listen: false);
+    
+    // Lógica de Toupeira Dourada
+    bool isGolden = random.nextDouble() < gameState.goldenMoleChance;
+    
+    // ID única combinando contador e timestamp para evitar chaves duplicadas
+    final newMole = MoleData(
+      id: 'mole_${moleCounter++}_${DateTime.now().microsecondsSinceEpoch}',
+      x: (random.nextDouble() * 1.7) - 0.85,
+      y: (random.nextDouble() * 1.7) - 0.85,
+      isGolden: isGolden,
+    );
 
-    // Calcula o tempo que ela fica na tela (diminuindo com o tempo)
+    // Calcula o tempo que ela fica na tela
     double calculatedUptime = startUptimeMs - (survivalSeconds * 10);
     int difficultyBaseUptime = max(minUptimeMs.toInt(), calculatedUptime.toInt());
-
-    // Aplica o Upgrade da Loja sobre a dificuldade atual
-    final gameState = Provider.of<GameState>(context, listen: false);
     int totalUptime = difficultyBaseUptime + gameState.extraMoleTimeMs;
 
-    moleDespawnTimer?.cancel();
-    moleDespawnTimer = Timer(Duration(milliseconds: totalUptime), () {
-      if (isMoleVisible && !isGameOver) {
-        triggerGameOver();
-      } else if (!isGameOver) {
-        // Se a toupeira foi acertada ou sumiu, agenda a próxima
-        scheduleNextMole();
+    newMole.despawnTimer = Timer(Duration(milliseconds: totalUptime), () {
+      if (!isGameOver) {
+        bool stillActive = moles.any((m) => m.id == newMole.id);
+        if (stillActive) {
+          triggerGameOver(newMole.id);
+        }
       }
+    });
+
+    setState(() {
+      moles.add(newMole);
     });
   }
 
-  void whack() {
-    if (isGameOver || !isMoleVisible) return;
+  void whack(String id) {
+    if (isGameOver) return;
 
-    moleDespawnTimer?.cancel(); 
+    final moleIndex = moles.indexWhere((m) => m.id == id);
+    if (moleIndex == -1) return;
+
+    final mole = moles[moleIndex];
+    mole.despawnTimer?.cancel();
+    
+    AudioUtils.playWhack();
     
     final gameState = Provider.of<GameState>(context, listen: false);
-    gameState.addCoins(gameState.coinMultiplier);
+    
+    // Cálculo de moedas (Dourada vale 3x mais)
+    int coinsEarned = gameState.coinMultiplier;
+    if (mole.isGolden) {
+      coinsEarned *= 3;
+    }
+    
+    gameState.addCoins(coinsEarned);
+    roundCoins += coinsEarned;
 
     setState(() {
-      isMoleVisible = false;
+      moles.removeAt(moleIndex);
     });
 
-    // Agenda a próxima toupeira imediatamente após o acerto
+    // Tenta spawnar outra imediatamente se estiver abaixo do limite
     scheduleNextMole();
   }
 
-  void triggerGameOver() {
+  void triggerGameOver(String moleId) {
+    final gameState = Provider.of<GameState>(context, listen: false);
+    
+    // Lógica do Upgrade Pacifista (chance de escapar sem morrer)
+    if (random.nextDouble() < gameState.pacifistChance) {
+      setState(() {
+        moles.removeWhere((m) => m.id == moleId);
+      });
+      scheduleNextMole();
+      return; 
+    }
+
     setState(() {
       isGameOver = true;
-      isMoleVisible = false;
     });
 
     survivalTimer?.cancel();
     nextMoleTimer?.cancel();
-    moleDespawnTimer?.cancel();
+    for (var mole in moles) {
+      mole.despawnTimer?.cancel();
+    }
+
+    // Lógica do Upgrade Sobrevivente (Dobrar ganhos se durar > 60s)
+    if (survivalSeconds >= 60 && gameState.hasSurvivorBonus) {
+      gameState.addCoins(roundCoins);
+    }
 
     showGameOverModal();
   }
@@ -142,17 +203,17 @@ class _GameScreenState extends State<GameScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      barrierColor: Colors.black.withOpacity(0.85), // Fundo bem escuro para focar no modal
+      barrierColor: Colors.black.withOpacity(0.85),
       builder: (BuildContext context) {
         return Dialog(
-          backgroundColor: Colors.transparent, // Deixamos transparente para desenhar nosso próprio fundo
+          backgroundColor: Colors.transparent, // Transparente para permitir a decoração personalizada do container
           elevation: 0,
           child: Container(
             padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
-              color: Colors.brown[900], // Fundo escuro estilo painel de madeira
+              color: Colors.brown[900],
               borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: Colors.orange[400]!, width: 4), // Borda chamativa
+              border: Border.all(color: Colors.orange[400]!, width: 4),
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withOpacity(0.6),
@@ -162,9 +223,8 @@ class _GameScreenState extends State<GameScreen> {
               ],
             ),
             child: Column(
-              mainAxisSize: MainAxisSize.min, // Ajusta o tamanho da coluna ao conteúdo
+              mainAxisSize: MainAxisSize.min,
               children: [
-                // --- Título ---
                 const Text(
                   'A TOUPEIRA ESCAPOU!',
                   textAlign: TextAlign.center,
@@ -180,7 +240,6 @@ class _GameScreenState extends State<GameScreen> {
                 ),
                 const SizedBox(height: 24),
                 
-                // --- Caixa de Estatísticas ---
                 Container(
                   padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
                   decoration: BoxDecoration(
@@ -190,7 +249,6 @@ class _GameScreenState extends State<GameScreen> {
                   ),
                   child: Column(
                     children: [
-                      // Tempo
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
@@ -205,7 +263,6 @@ class _GameScreenState extends State<GameScreen> {
                         ],
                       ),
                       const Divider(color: Colors.white24, height: 24, thickness: 2),
-                      // Moedas
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
@@ -224,7 +281,6 @@ class _GameScreenState extends State<GameScreen> {
                 ),
                 const SizedBox(height: 32),
                 
-                // --- Botões ---
                 Row(
                   children: [
                     Expanded(
@@ -237,6 +293,7 @@ class _GameScreenState extends State<GameScreen> {
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         ),
                         onPressed: () {
+                          AudioUtils.playTap();
                           Navigator.of(context).pop(); 
                           Navigator.of(context).pushReplacement(
                             MaterialPageRoute(builder: (context) => const ShopScreen()),
@@ -257,6 +314,7 @@ class _GameScreenState extends State<GameScreen> {
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         ),
                         onPressed: () {
+                          AudioUtils.playTap();
                           Navigator.of(context).pop();
                           startGame(); 
                         },
@@ -278,7 +336,9 @@ class _GameScreenState extends State<GameScreen> {
   void dispose() {
     survivalTimer?.cancel();
     nextMoleTimer?.cancel();
-    moleDespawnTimer?.cancel();
+    for (var mole in moles) {
+      mole.despawnTimer?.cancel();
+    }
     super.dispose();
   }
 
@@ -292,28 +352,30 @@ class _GameScreenState extends State<GameScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: Container(
-        width: double.infinity,  // <-- ADICIONE ISTO
-        height: double.infinity, // <-- ADICIONE ISTO
+        width: double.infinity,
+        height: double.infinity,
         decoration: const BoxDecoration(
           image: DecorationImage(
-            image: AssetImage('assets/grass.jpeg'), // Confirme se é .jpeg, .jpg ou .png
+            image: AssetImage('assets/grass.jpeg'),
             fit: BoxFit.cover,
           ),
         ),
         child: Stack(
           children: [
-            // Toupeira e Buraco
-            if (isMoleVisible)
+            // Renderiza todas as toupeiras ativas
+            for (var mole in moles)
               Align(
-                alignment: Alignment(moleX, moleY),
+                key: ValueKey(mole.id),
+                alignment: Alignment(mole.x, mole.y),
                 child: GestureDetector(
-                  onTap: whack,
+                  onTap: () => whack(mole.id),
                   child: SizedBox(
                     width: 100,
                     height: 100,
                     child: Stack(
                       alignment: Alignment.center,
                       children: [
+                        // Sombra do buraco
                         Container(
                           width: 80,
                           height: 30,
@@ -323,19 +385,34 @@ class _GameScreenState extends State<GameScreen> {
                             borderRadius: BorderRadius.circular(50),
                           ),
                         ),
+                        // Emoji da Toupeira (Dourada ou Normal)
                         AnimatedScale(
-                          scale: isMoleVisible ? 1.0 : 0.0,
+                          scale: 1.0,
                           duration: const Duration(milliseconds: 150),
                           curve: Curves.easeOutBack,
-                          child: const Text('🐹', style: TextStyle(fontSize: 70)),
+                          child: Text(
+                            mole.isGolden ? '🐹' : '🐹', // Poderia usar 🐹 com filtro ou outro emoji
+                            style: TextStyle(
+                              fontSize: 70,
+                              shadows: mole.isGolden ? [
+                                const Shadow(color: Colors.amber, blurRadius: 20, offset: Offset(0, 0)),
+                                const Shadow(color: Colors.orange, blurRadius: 10, offset: Offset(0, 0)),
+                              ] : [],
+                            ),
+                          ),
                         ),
+                        if (mole.isGolden)
+                          const Positioned(
+                            top: 0,
+                            right: 0,
+                            child: Icon(Icons.star, color: Colors.amber, size: 30),
+                          ),
                       ],
                     ),
                   ),
                 ),
               ),
             
-            // HUD (Interface)
             SafeArea(
               child: Padding(
                 padding: const EdgeInsets.all(16.0),

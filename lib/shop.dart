@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'game_state.dart';
+import 'game.dart';
+import 'audio_utils.dart';
 
 class ShopScreen extends StatelessWidget {
   const ShopScreen({super.key});
@@ -8,7 +10,7 @@ class ShopScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.brown[900], // Fundo rústico de "madeira" escuro
+      backgroundColor: Colors.brown[900],
       appBar: AppBar(
         title: const Text(
           'LOJA DE MELHORIAS', 
@@ -23,7 +25,7 @@ class ShopScreen extends StatelessWidget {
         ),
         backgroundColor: Colors.transparent, // Fundo transparente para mesclar com o Scaffold
         elevation: 0,
-        iconTheme: IconThemeData(color: Colors.orange[400]), // Ícone de "voltar" estilizado
+        iconTheme: IconThemeData(color: Colors.orange[400]),
         actions: [
           // Exibe as moedas atuais num "badge" igual ao do HUD do jogo
           Center(
@@ -63,16 +65,15 @@ class ShopScreen extends StatelessWidget {
             itemBuilder: (context, index) {
               final upgrade = gameState.upgrades[index];
               
-              // --- Lógica de bloqueio e esgotamento da loja ---
               final isMaxLevel = upgrade.level >= upgrade.maxLevel;
               final canAfford = gameState.coins >= upgrade.cost && !isMaxLevel;
 
               return Container(
                 margin: const EdgeInsets.only(bottom: 16),
                 decoration: BoxDecoration(
-                  color: Colors.brown[700], // Fundo do cartão seguindo o estilo do modal
+                  color: Colors.brown[700],
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.orange[400]!, width: 2), // Borda brilhante
+                  border: Border.all(color: Colors.orange[400]!, width: 2),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withOpacity(0.5),
@@ -85,7 +86,6 @@ class ShopScreen extends StatelessWidget {
                   padding: const EdgeInsets.all(16.0),
                   child: Row(
                     children: [
-                      // --- Ícone da Melhoria ---
                       Container(
                         width: 60,
                         height: 60,
@@ -98,7 +98,6 @@ class ShopScreen extends StatelessWidget {
                       ),
                       const SizedBox(width: 16),
                       
-                      // --- Detalhes da Melhoria ---
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -108,7 +107,7 @@ class ShopScreen extends StatelessWidget {
                               style: const TextStyle(
                                 fontSize: 18, 
                                 fontWeight: FontWeight.bold, 
-                                color: Colors.white // Fonte branca para contrastar com marrom
+                                color: Colors.white
                               ),
                             ),
                             const SizedBox(height: 4),
@@ -121,7 +120,6 @@ class ShopScreen extends StatelessWidget {
                       ),
                       const SizedBox(width: 12),
                       
-                      // --- Botão de Comprar ---
                       ElevatedButton(
                         style: ElevatedButton.styleFrom(
                           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -138,6 +136,7 @@ class ShopScreen extends StatelessWidget {
                         ),
                         onPressed: canAfford
                             ? () {
+                                AudioUtils.playBuy();
                                 gameState.buyUpgrade(upgrade.id);
                               }
                             : null, // Desativa se não houver moedas ou estiver no nível máximo
@@ -164,6 +163,25 @@ class ShopScreen extends StatelessWidget {
             },
           );
         },
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        backgroundColor: Colors.green[600],
+        onPressed: () {
+          AudioUtils.playTap();
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => const GameScreen()),
+          );
+        },
+        label: const Text(
+          'JOGAR', 
+          style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 18)
+        ),
+        icon: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 30),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: Colors.white24, width: 2),
+        ),
       ),
     );
   }
