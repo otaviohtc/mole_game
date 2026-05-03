@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 
-// A simple model to represent an Upgrade
 class Upgrade {
   final String id;
   final String name;
   final String description;
-  final IconData icon; // Using an Icon as a placeholder for your future images
+  final IconData icon;
   int cost;
-  int level; // How many times we bought it
+  int level;
+  final int maxLevel;
+  final List<int>? customCosts; // Para custos fixos específicos (ex: 50, 100, 150)
 
   Upgrade({
     required this.id,
@@ -16,53 +17,124 @@ class Upgrade {
     required this.icon,
     required this.cost,
     this.level = 0,
+    this.maxLevel = 99,
+    this.customCosts,
   });
 }
 
 class GameState extends ChangeNotifier {
-  int _coins = 0;
-  int get coins => _coins;
+  int coins = 0; 
+  
+  // Efeitos estáticos
+  int extraMoleTimeMs = 0;
+  int coinMultiplier = 1;
 
-  // Our list of available upgrades
-  final List<Upgrade> _upgrades = [
-    Upgrade(
-      id: 'multi',
-      name: 'Golden Mallet',
-      description: 'Earn +1 extra coin per whack.',
-      icon: Icons.gavel,
-      cost: 10,
-    ),
-    Upgrade(
-      id: 'time',
-      name: 'Slowpoke Moles',
-      description: 'Moles stay out longer before disappearing.',
-      icon: Icons.hourglass_bottom,
-      cost: 20,
-    ),
-  ];
+  late List<Upgrade> upgrades;
 
-  List<Upgrade> get upgrades => _upgrades;
+  GameState() {
+    upgrades = [
+      // --- UPGRADES CLÁSSICOS ---
+      Upgrade(
+        id: 'golden_mallet', 
+        name: 'Martelo Dourado', 
+        description: 'Aumenta as moedas recebidas por acerto.', 
+        icon: Icons.gavel, 
+        cost: 20,
+        maxLevel: 10,
+      ),
+      Upgrade(
+        id: 'time', 
+        name: 'Reflexos Lentos', 
+        description: 'Toupeira fica mais tempo na tela.', 
+        icon: Icons.timer, 
+        cost: 10,
+        maxLevel: 10,
+      ),
+      Upgrade(
+        id: 'multi_mole',
+        name: '+ Toupeiras',
+        description: 'Dobra a quantidade de toupeiras simultâneas.',
+        icon: Icons.people,
+        cost: 40,
+        maxLevel: 2,
+        customCosts: [40, 80], // Tabela de preços
+      ),
+      Upgrade(
+        id: 'pacifist',
+        name: 'Pacifista',
+        description: 'Chance de não perder se a toupeira escapar (+5%).',
+        icon: Icons.favorite,
+        cost: 30, // Preço inicial
+        maxLevel: 10,
+      ),
+      Upgrade(
+        id: 'survivor',
+        name: 'Sobrevivente',
+        description: 'Sobreviva 1 min para dobrar os ganhos do round.',
+        icon: Icons.shield,
+        cost: 100,
+        maxLevel: 1, // Compra única
+      ),
+      Upgrade(
+        id: 'golden_mole',
+        name: 'Toupeiras Douradas',
+        description: 'Chance da toupeira valer 3x mais moedas (+5%).',
+        icon: Icons.star,
+        cost: 50,
+        maxLevel: 3,
+        customCosts: [50, 100, 150],
+      ),
+    ];
+  }
 
-  // Called from game.dart when whacking a mole
+  // --- Getters dos Efeitos Novos para usar na GameScreen ---
+  
+  int get maxMoles {
+    int level = _getLevel('multi_mole');
+    if (level == 1) return 2;
+    if (level == 2) return 4;
+    return 1; // Padrão
+  }
+
+  double get pacifistChance => _getLevel('pacifist') * 0.05; // 5% por nível (0.05 a 0.50)
+  
+  bool get hasSurvivorBonus => _getLevel('survivor') > 0;
+  
+  double get goldenMoleChance => _getLevel('golden_mole') * 0.05; // 5% por nível (0.05 a 0.15)
+
+  int _getLevel(String id) {
+    return upgrades.firstWhere((u) => u.id == id).level;
+  }
+
+  // --- Ações ---
+
   void addCoins(int amount) {
-    _coins += amount;
-    notifyListeners(); // Tells the UI to redraw
+    coins += amount;
+    notifyListeners();
   }
 
-  // Called from shop.dart when buying an upgrade
-  bool buyUpgrade(String id) {
-    final upgrade = _upgrades.firstWhere((u) => u.id == id);
-    if (_coins >= upgrade.cost) {
-      _coins -= upgrade.cost;
+  void buyUpgrade(String id) {
+    final upgrade = upgrades.firstWhere((u) => u.id == id);
+    
+    // Verifica se tem dinheiro e se não atingiu o nível máximo
+    if (coins >= upgrade.cost && upgrade.level < upgrade.maxLevel) {
+      coins -= upgrade.cost;
       upgrade.level++;
-      upgrade.cost = (upgrade.cost * 1.5).round(); // Make it more expensive next time!
-      notifyListeners();
-      return true; // Success
-    }
-    return false; // Not enough coins
-  }
 
-  // Helper getters that our game.dart can use later to apply the upgrades!
-  int get coinMultiplier => 1 + _upgrades.firstWhere((u) => u.id == 'multi').level;
-  int get extraMoleTimeMs => _upgrades.firstWhere((u) => u.id == 'time').level * 500;
+      // Efeitos estáticos de upgrades que afetam variáveis globais
+      if (id == 'time') extraMoleTimeMs += 200;
+      if (id == 'golden_mallet') coinMultiplier += 1; // <--- Martelo funcionando aqui!
+
+      // Define o preço da próxima compra
+      if (upgrade.level < upgrade.maxLevel) {
+        if (upgrade.customCosts != null) {
+          upgrade.cost = upgrade.customCosts![upgrade.level];
+        } else {
+          // Escala de preço padrão (ex: +30% mais caro) se não houver customCosts
+          upgrade.cost = (upgrade.cost * 1.3).toInt(); 
+        }
+      }
+      notifyListeners();
+    }
+  }
 }

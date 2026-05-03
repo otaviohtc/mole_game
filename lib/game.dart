@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'game_state.dart';
-import 'shop.dart'; // Import the shop so we can navigate to it on Game Over
+import 'shop.dart';
 
 class GameScreen extends StatefulWidget {
   const GameScreen({super.key});
@@ -14,21 +14,30 @@ class GameScreen extends StatefulWidget {
 }
 
 class _GameScreenState extends State<GameScreen> {
-  // --- Game State (Local) ---
+  // --- Estado do Jogo (Local) ---
   int survivalSeconds = 0;
-  int activeMoleIndex = -1;
   bool isGameOver = false;
+  
+  // --- Posição e Estado da Toupeira ---
+  bool isMoleVisible = false;
+  double moleX = 0.0;
+  double moleY = 0.0;
 
-  // --- Timers ---
+  // --- Cronômetros ---
   Timer? survivalTimer;
-  Timer? moleSpawnerTimer;
+  Timer? nextMoleTimer; // Substitui o moleSpawnerTimer fixo
   Timer? moleDespawnTimer;
 
   final Random random = Random();
 
-  // --- Base Game Settings ---
-  final int spawnRateMs = 2000; // How often a mole appears (2 seconds)
-  final int baseMoleUptimeMs = 1500; // Base time before mole escapes (1.5 seconds)
+  // --- Parâmetros de Dificuldade ---
+  // Valores iniciais
+  final double startSpawnRateMs = 2000.0; 
+  final double startUptimeMs = 1500.0;
+  
+  // Limites mínimos (para o jogo não ficar impossível)
+  final double minSpawnRateMs = 600.0;
+  final double minUptimeMs = 400.0;
 
   @override
   void initState() {
@@ -39,19 +48,33 @@ class _GameScreenState extends State<GameScreen> {
   void startGame() {
     setState(() {
       survivalSeconds = 0;
-      activeMoleIndex = -1;
+      isMoleVisible = false;
       isGameOver = false;
     });
 
-    // 1. Start tracking survival time
+    // Cronômetro de sobrevivência
     survivalTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      setState(() {
-        survivalSeconds++;
-      });
+      if (!isGameOver) {
+        setState(() {
+          survivalSeconds++;
+        });
+      }
     });
 
-    // 2. Start the mole spawner
-    moleSpawnerTimer = Timer.periodic(Duration(milliseconds: spawnRateMs), (timer) {
+    // Inicia o ciclo de spawn
+    scheduleNextMole();
+  }
+
+  // --- Lógica da Curva de Dificuldade ---
+  void scheduleNextMole() {
+    if (isGameOver) return;
+
+    // A cada segundo que passa, diminuímos os milissegundos.
+    // Ex: A cada segundo, o spawn fica 15ms mais rápido.
+    double calculatedSpawnRate = startSpawnRateMs - (survivalSeconds * 15);
+    int currentSpawnDelay = max(minSpawnRateMs.toInt(), calculatedSpawnRate.toInt());
+
+    nextMoleTimer = Timer(Duration(milliseconds: currentSpawnDelay), () {
       spawnMole();
     });
   }
@@ -60,88 +83,192 @@ class _GameScreenState extends State<GameScreen> {
     if (isGameOver) return;
 
     setState(() {
-      activeMoleIndex = random.nextInt(9);
+      moleX = (random.nextDouble() * 1.7) - 0.85;
+      moleY = (random.nextDouble() * 1.7) - 0.85;
+      isMoleVisible = true;
     });
 
-    // --- APPLY UPGRADE: Time ---
-    // Fetch the extra time from our GameState provider
-    final gameState = Provider.of<GameState>(context, listen: false);
-    final int currentMoleUptimeMs = baseMoleUptimeMs + gameState.extraMoleTimeMs;
+    // Calcula o tempo que ela fica na tela (diminuindo com o tempo)
+    double calculatedUptime = startUptimeMs - (survivalSeconds * 10);
+    int difficultyBaseUptime = max(minUptimeMs.toInt(), calculatedUptime.toInt());
 
-    // 3. Start the despawn timer
+    // Aplica o Upgrade da Loja sobre a dificuldade atual
+    final gameState = Provider.of<GameState>(context, listen: false);
+    int totalUptime = difficultyBaseUptime + gameState.extraMoleTimeMs;
+
     moleDespawnTimer?.cancel();
-    moleDespawnTimer = Timer(Duration(milliseconds: currentMoleUptimeMs), () {
-      if (activeMoleIndex != -1 && !isGameOver) {
+    moleDespawnTimer = Timer(Duration(milliseconds: totalUptime), () {
+      if (isMoleVisible && !isGameOver) {
         triggerGameOver();
+      } else if (!isGameOver) {
+        // Se a toupeira foi acertada ou sumiu, agenda a próxima
+        scheduleNextMole();
       }
     });
   }
 
-  void whack(int index) {
-    if (isGameOver) return;
+  void whack() {
+    if (isGameOver || !isMoleVisible) return;
 
-    if (index == activeMoleIndex) {
-      moleDespawnTimer?.cancel(); // Stop the game over timer
-      
-      // --- APPLY UPGRADE: Multiplier ---
-      // Fetch the coin multiplier and add coins to the global state
-      final gameState = Provider.of<GameState>(context, listen: false);
-      gameState.addCoins(gameState.coinMultiplier);
+    moleDespawnTimer?.cancel(); 
+    
+    final gameState = Provider.of<GameState>(context, listen: false);
+    gameState.addCoins(gameState.coinMultiplier);
 
-      setState(() {
-        activeMoleIndex = -1; // Hide the mole
-      });
-    }
+    setState(() {
+      isMoleVisible = false;
+    });
+
+    // Agenda a próxima toupeira imediatamente após o acerto
+    scheduleNextMole();
   }
 
   void triggerGameOver() {
     setState(() {
       isGameOver = true;
-      activeMoleIndex = -1;
+      isMoleVisible = false;
     });
 
     survivalTimer?.cancel();
-    moleSpawnerTimer?.cancel();
+    nextMoleTimer?.cancel();
     moleDespawnTimer?.cancel();
 
     showGameOverModal();
   }
 
   void showGameOverModal() {
-    // Read the final coin count to display in the modal
     final currentCoins = Provider.of<GameState>(context, listen: false).coins;
 
     showDialog(
       context: context,
       barrierDismissible: false,
+      barrierColor: Colors.black.withOpacity(0.85), // Fundo bem escuro para focar no modal
       builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Fail!', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 30)),
-          content: Text(
-            'The mole got away!\n\nWallet: $currentCoins coins\nSurvived: $survivalSeconds seconds',
-            style: const TextStyle(fontSize: 18),
+        return Dialog(
+          backgroundColor: Colors.transparent, // Deixamos transparente para desenhar nosso próprio fundo
+          elevation: 0,
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Colors.brown[900], // Fundo escuro estilo painel de madeira
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: Colors.orange[400]!, width: 4), // Borda chamativa
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.6),
+                  blurRadius: 15,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min, // Ajusta o tamanho da coluna ao conteúdo
+              children: [
+                // --- Título ---
+                const Text(
+                  'A TOUPEIRA ESCAPOU!',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 26,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                    letterSpacing: 1.2,
+                    shadows: [
+                      Shadow(color: Colors.black, offset: Offset(2, 2), blurRadius: 4),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+                
+                // --- Caixa de Estatísticas ---
+                Container(
+                  padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+                  decoration: BoxDecoration(
+                    color: Colors.brown[700],
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.brown[600]!, width: 2),
+                  ),
+                  child: Column(
+                    children: [
+                      // Tempo
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('Tempo:', style: TextStyle(color: Colors.white70, fontSize: 18, fontWeight: FontWeight.bold)),
+                          Row(
+                            children: [
+                              const Icon(Icons.timer, color: Colors.white, size: 22),
+                              const SizedBox(width: 6),
+                              Text('$survivalSeconds s', style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+                            ],
+                          ),
+                        ],
+                      ),
+                      const Divider(color: Colors.white24, height: 24, thickness: 2),
+                      // Moedas
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('Carteira:', style: TextStyle(color: Colors.white70, fontSize: 18, fontWeight: FontWeight.bold)),
+                          Row(
+                            children: [
+                              const Icon(Icons.monetization_on, color: Colors.amber, size: 22),
+                              const SizedBox(width: 6),
+                              Text('$currentCoins', style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 32),
+                
+                // --- Botões ---
+                Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          backgroundColor: Colors.orange[600],
+                          foregroundColor: Colors.white,
+                          elevation: 5,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        onPressed: () {
+                          Navigator.of(context).pop(); 
+                          Navigator.of(context).pushReplacement(
+                            MaterialPageRoute(builder: (context) => const ShopScreen()),
+                          );
+                        },
+                        icon: const Icon(Icons.store, size: 24),
+                        label: const Text('Loja', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          backgroundColor: Colors.green[600],
+                          foregroundColor: Colors.white,
+                          elevation: 5,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                          startGame(); 
+                        },
+                        icon: const Icon(Icons.replay, size: 24),
+                        label: const Text('Jogar', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop(); // Close dialog
-                // Navigate to Shop and remove GameScreen from the stack 
-                // so the back button goes to Main Menu
-                Navigator.of(context).pushReplacement(
-                  MaterialPageRoute(builder: (context) => const ShopScreen()),
-                );
-              },
-              child: const Text('Go to Shop', style: TextStyle(fontSize: 18)),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.brown[700], foregroundColor: Colors.white),
-              onPressed: () {
-                Navigator.of(context).pop(); // Close dialog
-                startGame(); // Restart the game loop
-              },
-              child: const Text('Replay', style: TextStyle(fontSize: 18)),
-            ),
-          ],
         );
       },
     );
@@ -150,7 +277,7 @@ class _GameScreenState extends State<GameScreen> {
   @override
   void dispose() {
     survivalTimer?.cancel();
-    moleSpawnerTimer?.cancel();
+    nextMoleTimer?.cancel();
     moleDespawnTimer?.cancel();
     super.dispose();
   }
@@ -164,63 +291,92 @@ class _GameScreenState extends State<GameScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: Colors.brown[600],
-        foregroundColor: Colors.white,
-        title: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            // --- CONNECT UI TO STATE ---
-            // Consumer automatically rebuilds this text whenever coins change
-            Consumer<GameState>(
-              builder: (context, gameState, child) {
-                return Text('Coins: ${gameState.coins}', style: const TextStyle(fontWeight: FontWeight.bold));
-              },
-            ),
-            Text('Time: $formattedTime', style: const TextStyle(fontWeight: FontWeight.bold)),
-          ],
+      body: Container(
+        width: double.infinity,  // <-- ADICIONE ISTO
+        height: double.infinity, // <-- ADICIONE ISTO
+        decoration: const BoxDecoration(
+          image: DecorationImage(
+            image: AssetImage('assets/grass.jpeg'), // Confirme se é .jpeg, .jpg ou .png
+            fit: BoxFit.cover,
+          ),
         ),
-      ),
-      body: Center(
-        child: AspectRatio(
-          aspectRatio: 1,
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: GridView.builder(
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: 9,
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3,
-                crossAxisSpacing: 15,
-                mainAxisSpacing: 15,
-              ),
-              itemBuilder: (context, index) {
-                bool hasMole = index == activeMoleIndex;
-
-                return GestureDetector(
-                  onTap: () => whack(index),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.brown[900],
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.black54, width: 4),
-                    ),
-                    child: AnimatedScale(
-                      scale: hasMole ? 1.0 : 0.0,
-                      duration: const Duration(milliseconds: 150),
-                      curve: Curves.easeOutBack,
-                      child: const Center(
-                        child: Text(
-                          '🐹',
-                          style: TextStyle(fontSize: 60),
+        child: Stack(
+          children: [
+            // Toupeira e Buraco
+            if (isMoleVisible)
+              Align(
+                alignment: Alignment(moleX, moleY),
+                child: GestureDetector(
+                  onTap: whack,
+                  child: SizedBox(
+                    width: 100,
+                    height: 100,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        Container(
+                          width: 80,
+                          height: 30,
+                          margin: const EdgeInsets.only(top: 60),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.6),
+                            borderRadius: BorderRadius.circular(50),
+                          ),
                         ),
-                      ),
+                        AnimatedScale(
+                          scale: isMoleVisible ? 1.0 : 0.0,
+                          duration: const Duration(milliseconds: 150),
+                          curve: Curves.easeOutBack,
+                          child: const Text('🐹', style: TextStyle(fontSize: 70)),
+                        ),
+                      ],
                     ),
                   ),
-                );
-              },
+                ),
+              ),
+            
+            // HUD (Interface)
+            SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.5),
+                    borderRadius: BorderRadius.circular(15),
+                    border: Border.all(color: Colors.white24, width: 2),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Consumer<GameState>(
+                        builder: (context, gameState, child) {
+                          return Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.monetization_on, color: Colors.amber, size: 24),
+                              const SizedBox(width: 8),
+                              Text('${gameState.coins}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20)),
+                            ],
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.timer, color: Colors.white, size: 24),
+                          const SizedBox(width: 8),
+                          Text(formattedTime, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20)),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );
